@@ -7,6 +7,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.models import DeliveryLog, Notification
+from app.services.rate_limiter import acquire_token
 from app.services.sender import send_message
 
 MAX_RETRIES = 2  # 1 спроба + 2 повтори = 3 спроби разом
@@ -34,6 +35,9 @@ async def deliver(notification_id: int, attempt: int) -> int | None:
         if notification.status == "sent":  # повторна доставка задачі: вже надіслано
             return 200
 
+        # Спільний для всіх воркерів ліміт частоти (token bucket у Redis).
+        # acquire_token синхронний і може чекати, тому виносимо його в окремий потік.
+        await asyncio.to_thread(acquire_token)
         status_code = await send_message(notification.message)
         session.add(
             DeliveryLog(notification_id=notification_id, attempt=attempt, status_code=status_code)

@@ -10,3 +10,11 @@ ignore = ["B008", "BLE001"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["app"]
+concurrency = ["greenlet", "thread"]  # async SQLAlchemy перемикається через greenlet
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ['if __name__ == "__main__":']
