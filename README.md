@@ -94,8 +94,10 @@ Honest list of what a production version would still need:
   before queuing the task, the redelivered event is treated as a duplicate until the lock expires
   (5 min).
 - **Duplicate API requests return `500`.** Should return the existing notification or `409`.
-- **Rate limiting** towards the provider (e.g. Celery `rate_limit` or a Redis token bucket) is not
-  implemented.
+- **Rate limiting** towards the provider is not implemented. Next step: a Redis fixed-window
+  counter shared by all Celery workers (`INCR` + `EXPIRE` in one `MULTI/EXEC`), deferring the task
+  with `self.retry(countdown=...)` when the window is full. Celery's own `rate_limit` is not enough,
+  because it counts per worker, not across replicas.
 - **Real Telegram Bot API** instead of the local mock, and Flower for monitoring Celery.
 
 ## Running locally
