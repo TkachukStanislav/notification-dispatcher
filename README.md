@@ -5,7 +5,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-DLQ-FF6600)
 ![Celery](https://img.shields.io/badge/Celery-retries-37814A)
-![Redis](https://img.shields.io/badge/Redis-idempotency_%7C_rate_limit-DC382D)
+![Redis](https://img.shields.io/badge/Redis-idempotency-DC382D)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
 **Reliable asynchronous notification delivery.** The API accepts a notification and responds
@@ -24,7 +24,6 @@ flowchart LR
     CON -->|lock idempotency_key| R[(Redis)]
     CON -->|send_notification.delay| TQ[[RabbitMQ<br/>notifications.tasks]]
     TQ --> W[Celery worker]
-    W -->|token bucket| R
     W -->|send, retry with backoff| T[Telegram API<br/>mock]
     W -->|sent / failed + delivery_logs| DB
 ```
@@ -34,8 +33,8 @@ Two kinds of workers, each with one job:
 - **Event consumer (aio-pika)** reads raw events in their own format — as it would from an external
   system like an ERP — validates them, drops duplicates and hands each one to Celery. It stays fast,
   so the event queue never backs up while a provider is slow.
-- **Celery worker** does the slow part: waits for a rate-limit token, sends the notification,
-  retries on failure and records the result.
+- **Celery worker** does the slow part: sends the notification, retries on failure and records
+  the result.
 
 ## Features
 
@@ -45,7 +44,6 @@ Two kinds of workers, each with one job:
 | **Event queue** | RabbitMQ with a direct exchange and a dead-letter queue for invalid events |
 | **Task queue** | Celery on RabbitMQ with late acks, one task per worker slot |
 | **Idempotency** | Unique key in PostgreSQL + atomic Redis `SET NX EX` lock in the consumer; the task skips already-sent notifications |
-| **Distributed rate limiting** | Token bucket in Redis implemented as a Lua script (30 msg/s, shared by all Celery workers) |
 | **Retries** | Up to 3 attempts on 5xx / connection errors via Celery `retry` with exponential backoff and jitter |
 | **Delivery history** | Every attempt stored in `delivery_logs` |
 | **Health checks** | `/health/live` (process) and `/health/ready` (PostgreSQL + Redis, `503` on failure) |
@@ -75,12 +73,6 @@ RabbitMQ (aio-pika) · Celery · Redis · httpx · pytest · respx · ruff · Do
   `2^attempt + random jitter` seconds of delay; 4xx responses fail immediately, because repeating
   a bad request will not fix it. Jitter prevents all failed messages from retrying at once. The
   delay is a Celery countdown, so the worker is free for other tasks while waiting.
-- **Distributed rate limiting with Lua.** The provider allows ~30 messages/s per bot. Every Celery
-  worker takes a token from one shared token bucket in Redis before sending, so the limit holds
-  for any number of replicas. Reading, refilling and taking a token are several steps, so they run
-  as one Lua script that Redis executes atomically, with the time taken from Redis `TIME` so all
-  workers share one clock. The token is taken only after the "already sent" check, so redelivered
-  tasks do not waste the budget.
 - **Async code inside sync Celery tasks.** Tasks are synchronous, the delivery code is async. Each
   task runs it with `asyncio.run()` on a separate engine with `NullPool`, because a pooled
   connection is bound to the event loop that created it and every `asyncio.run()` starts a new one.
@@ -102,8 +94,8 @@ Honest list of what a production version would still need:
   before queuing the task, the redelivered event is treated as a duplicate until the lock expires
   (5 min).
 - **Duplicate API requests return `500`.** Should return the existing notification or `409`.
-- **Per-chat limits.** The token bucket enforces the global per-bot limit; Telegram's per-chat
-  limit (1 msg/s) would need a bucket per `recipient_id`.
+- **Rate limiting** towards the provider (e.g. Celery `rate_limit` or a Redis token bucket) is not
+  implemented.
 - **Real Telegram Bot API** instead of the local mock, and Flower for monitoring Celery.
 
 ## Running locally
@@ -162,7 +154,7 @@ Within a second the consumer hands it to Celery, and the worker sets the status 
 pytest -v --cov
 ```
 
-32 tests, 100% line coverage of `app/` (CI fails below 100%). Needs the PostgreSQL and Redis
+30 tests, 100% line coverage of `app/` (CI fails below 100%). Needs the PostgreSQL and Redis
 containers with migrations applied; RabbitMQ, the Celery broker and the Telegram API are mocked.
 
 ## Project structure
@@ -173,12 +165,11 @@ app/
 ├── core/           # settings, database engine
 ├── models/         # Notification, DeliveryLog
 ├── schemas/        # Pydantic schemas
-├── services/       # RabbitMQ broker, idempotency lock, rate limiter, HTTP sender
+├── services/       # RabbitMQ broker, idempotency lock, HTTP sender
 ├── workers/        # aio-pika event consumer
 ├── tasks.py        # Celery app and the send_notification task
 └── main.py         # FastAPI app and lifespan
 alembic/            # migrations
-scripts/            # token_bucket.lua (atomic rate limiter run inside Redis)
 tests/              # pytest suite
 mock_telegram.py    # local stand-in for the Telegram API
 ```

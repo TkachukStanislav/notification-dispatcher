@@ -21,7 +21,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 
 COPY app ./app
-COPY scripts ./scripts
 COPY alembic ./alembic
 COPY alembic.ini .
 

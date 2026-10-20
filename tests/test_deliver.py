@@ -19,7 +19,6 @@ def task_db(db_session, monkeypatch):
         yield db_session
 
     monkeypatch.setattr(tasks, "SessionLocal", session_factory)
-    monkeypatch.setattr(tasks, "acquire_token", lambda: None)  # ліміт частоти тут не перевіряємо
     return db_session
 
 
